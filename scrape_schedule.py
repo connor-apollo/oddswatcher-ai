@@ -1,63 +1,90 @@
-import requests
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timezone
+import betfairlightweight
+from betfairlightweight import filters
 
-# Make sure this folder exists
+# --- Load credentials from environment ---
+USERNAME = os.getenv("BETFAIR_USERNAME")
+PASSWORD = os.getenv("BETFAIR_PASSWORD")
+APP_KEY = os.getenv("BETFAIR_APP_KEY")
+
+# --- Ensure snapshots directory exists ---
 os.makedirs("snapshots", exist_ok=True)
 
-# Read your API key from environment variable
-API_KEY = os.getenv("ODDS_API_KEY")
+# --- Connect to Betfair Exchange ---
+trading = betfairlightweight.APIClient(USERNAME, PASSWORD, app_key=APP_KEY, certs=None)
+trading.login()
 
-# Configuration
-SPORT = 'horse_racing_uk'
-REGION = 'uk'
-MARKET = 'h2h'  # head-to-head market
+def get_horse_race_odds():
+    # Filter for today's UK horse WIN markets
+    market_filter = filters.market_filter(
+        event_type_ids=["7"],  # Horse Racing
+        market_countries=["GB"],
+        market_type_codes=["WIN"],
+        market_start_time={
+            "from": datetime.now(timezone.utc).isoformat(),
+            "to": datetime.now(timezone.utc).replace(hour=23, minute=59).isoformat()
+        }
+    )
 
-def get_odds():
-    url = f'https://api.the-odds-api.com/v4/sports/{SPORT}/odds'
-    params = {
-        'apiKey': API_KEY,
-        'regions': REGION,
-        'markets': MARKET,
-        'oddsFormat': 'decimal'
-    }
+    market_catalogues = trading.betting.list_market_catalogue(
+        filter=market_filter,
+        market_projection=["RUNNER_METADATA"],
+        max_results=20,
+        sort="FIRST_TO_START"
+    )
 
-    response = requests.get(url, params=params)
-    if response.status_code != 200:
-        print(f"❌ API error: {response.status_code} - {response.text}")
-        return {}
+    all_data = {}
 
-    data = response.json()
-    print(f"✅ Received {len(data)} events.")
+    for market in market_catalogues:
+        market_id = market.market_id
+        market_name = market.market_name
+        start_time = market.market_start_time.strftime("%Y-%m-%d %H:%M")
 
-    parsed_data = {}
-    for event in data:
-        race_name = event.get("home_team")
-        bookmakers = event.get("bookmakers", [])
-        if not bookmakers:
+        # Fetch live odds (market book)
+        market_books = trading.betting.list_market_book(
+            market_ids=[market_id],
+            price_projection=filters.price_projection(price_data=["EX_BEST_OFFERS"])
+        )
+
+        if not market_books:
             continue
 
-        outcomes = bookmakers[0]["markets"][0]["outcomes"]
-        horse_odds = {outcome["name"]: outcome["price"] for outcome in outcomes}
-        parsed_data[race_name] = horse_odds
+        odds = {}
+        for runner in market_books[0].runners:
+            selection_id = runner.selection_id
+            price = None
+            if runner.ex.available_to_back:
+                price = round(runner.ex.available_to_back[0].price, 2)
 
-    return parsed_data
+            # Get runner name from catalogue
+            runner_name = next(
+                (r.runner_name for r in market.runners if r.selection_id == selection_id),
+                "Unknown"
+            )
 
-def save_snapshot(data, label="api"):
+            if price:
+                odds[runner_name] = price
+
+        all_data[f"{start_time} - {market_name}"] = odds
+
+    return all_data
+
+def save_snapshot(data, label="betfair"):
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
     filename = f"snapshots/odds_snapshot_{label}_{timestamp}.json"
-    with open(filename, 'w') as f:
+    with open(filename, "w") as f:
         json.dump(data, f, indent=2)
-    print(f"📁 Snapshot saved to: {filename}")
+    print(f"✅ Snapshot saved: {filename}")
 
 def main():
-    print(f"\n🚀 Fetching odds via The Odds API - {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    odds = get_odds()
+    print(f"\n🚀 Fetching Betfair horse racing odds - {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    odds = get_horse_race_odds()
     if odds:
-        save_snapshot(odds, label="manual-test")
+        save_snapshot(odds, label="betfair")
     else:
-        print("⚠️ No data received from API.")
+        print("⚠️ No odds received from Betfair.")
 
 if __name__ == "__main__":
     main()
