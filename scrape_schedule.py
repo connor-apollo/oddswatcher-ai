@@ -13,7 +13,13 @@ APP_KEY = os.getenv("BETFAIR_APP_KEY")
 os.makedirs("snapshots", exist_ok=True)
 
 # --- Connect to Betfair Exchange ---
-trading = betfairlightweight.APIClient(USERNAME, PASSWORD, app_key=APP_KEY, certs=None)
+trading = betfairlightweight.APIClient(
+    username=USERNAME,
+    password=PASSWORD,
+    app_key=APP_KEY,
+    lightweight=True
+)
+
 trading.login()
 
 def get_horse_race_odds():
