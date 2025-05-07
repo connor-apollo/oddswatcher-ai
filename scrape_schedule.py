@@ -1,104 +1,63 @@
 import requests
-from bs4 import BeautifulSoup
-import re
-import json
 import os
-import time
+import json
 from datetime import datetime
-import schedule
 
-# Set headers to mimic browser
-HEADERS = {"User-Agent": "Mozilla/5.0"}
-
-# Ensure snapshots folder exists
+# Make sure this folder exists
 os.makedirs("snapshots", exist_ok=True)
 
-# Get all today's UK race URLs from Oddschecker
-def get_today_race_urls():
-    url = "https://www.oddschecker.com/horse-racing"
-    try:
-        resp = requests.get(url, headers=HEADERS)
-        soup = BeautifulSoup(resp.text, 'html.parser')
+# Read your API key from environment variable
+API_KEY = os.getenv("ODDS_API_KEY")
 
-        race_urls = set()
-        for link in soup.select("a"):
-            href = link.get("href", "")
-            if "/horse-racing/" in href and "/winner" in href:
-                full_url = f"https://www.oddschecker.com{href.split('?')[0]}"
-                race_urls.add(full_url)
+# Configuration
+SPORT = 'horse_racing_uk'
+REGION = 'uk'
+MARKET = 'h2h'  # head-to-head market
 
-        print(f"Found {len(race_urls)} race URLs.")
-        return list(race_urls)
+def get_odds():
+    url = f'https://api.the-odds-api.com/v4/sports/{SPORT}/odds'
+    params = {
+        'apiKey': API_KEY,
+        'regions': REGION,
+        'markets': MARKET,
+        'oddsFormat': 'decimal'
+    }
 
-    except Exception as e:
-        print(f"Error getting race URLs: {e}")
-        return []
-
-# Scrape odds for one race
-def scrape_race_odds(url):
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=10)
-        soup = BeautifulSoup(resp.text, 'html.parser')
-
-        race_data = {}
-        for row in soup.select('.racecard-row'):
-            horse_tag = row.select_one('.horse-name')
-            odds_tag = row.select_one('.best-price')
-
-            if horse_tag and odds_tag:
-                name = horse_tag.text.strip()
-                odds_text = odds_tag.text.strip()
-                match = re.match(r"(\d+)/(\d+)", odds_text)
-
-                if match:
-                    num, denom = map(int, match.groups())
-                    decimal_odds = round(1 + num / denom, 2)
-                elif odds_text.lower() == "evens":
-                    decimal_odds = 2.0
-                else:
-                    continue
-
-                race_data[name] = decimal_odds
-
-        print(f"Scraped {len(race_data)} horses from {url}")
-        return race_data
-
-    except Exception as e:
-        print(f"Error scraping {url}: {e}")
+    response = requests.get(url, params=params)
+    if response.status_code != 200:
+        print(f"❌ API error: {response.status_code} - {response.text}")
         return {}
 
-# Scrape all races and save a snapshot
-def scrape_all_races(label):
-    print(f"\n🚀 Starting scrape: {label} - {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    race_urls = get_today_race_urls()
-    all_data = {}
+    data = response.json()
+    print(f"✅ Received {len(data)} events.")
 
-    for url in race_urls:
-        odds = scrape_race_odds(url)
-        if odds:
-            all_data[url] = odds
-        time.sleep(1.5)  # Delay to avoid being blocked
+    parsed_data = {}
+    for event in data:
+        race_name = event.get("home_team")
+        bookmakers = event.get("bookmakers", [])
+        if not bookmakers:
+            continue
 
-    if all_data:
-        now = datetime.now().strftime("%Y-%m-%d_%H-%M")
-        filename = f"snapshots/odds_snapshot_{label}_{now}.json"
-        with open(filename, 'w') as f:
-            json.dump(all_data, f, indent=2)
-        print(f"✅ Saved snapshot: {filename}")
+        outcomes = bookmakers[0]["markets"][0]["outcomes"]
+        horse_odds = {outcome["name"]: outcome["price"] for outcome in outcomes}
+        parsed_data[race_name] = horse_odds
+
+    return parsed_data
+
+def save_snapshot(data, label="api"):
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    filename = f"snapshots/odds_snapshot_{label}_{timestamp}.json"
+    with open(filename, 'w') as f:
+        json.dump(data, f, indent=2)
+    print(f"📁 Snapshot saved to: {filename}")
+
+def main():
+    print(f"\n🚀 Fetching odds via The Odds API - {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    odds = get_odds()
+    if odds:
+        save_snapshot(odds, label="manual-test")
     else:
-        print("⚠️ No race data collected.")
-
-"""# Schedule daily snapshots
-schedule.every().day.at("08:00").do(lambda: scrape_all_races("morning"))
-schedule.every().day.at("12:00").do(lambda: scrape_all_races("midday"))
-schedule.every().day.at("15:00").do(lambda: scrape_all_races("afternoon"))
-
-# Keep script running
-if __name__ == "__main__":
-    print("🔁 Scheduler started. Waiting for next job...")
-    while True:
-        schedule.run_pending()
-        time.sleep(60)"""
+        print("⚠️ No data received from API.")
 
 if __name__ == "__main__":
-    scrape_all_races("manual-test")  # This will run instantly
+    main()
