@@ -1,0 +1,1 @@
+worker: python scrape_schedule.py
