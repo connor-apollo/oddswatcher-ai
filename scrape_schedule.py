@@ -88,7 +88,7 @@ def scrape_all_races(label):
     else:
         print("⚠️ No race data collected.")
 
-# Schedule daily snapshots
+"""# Schedule daily snapshots
 schedule.every().day.at("08:00").do(lambda: scrape_all_races("morning"))
 schedule.every().day.at("12:00").do(lambda: scrape_all_races("midday"))
 schedule.every().day.at("15:00").do(lambda: scrape_all_races("afternoon"))
@@ -98,4 +98,7 @@ if __name__ == "__main__":
     print("🔁 Scheduler started. Waiting for next job...")
     while True:
         schedule.run_pending()
-        time.sleep(60)
+        time.sleep(60)"""
+
+if __name__ == "__main__":
+    scrape_all_races("manual-test")  # This will run instantly
